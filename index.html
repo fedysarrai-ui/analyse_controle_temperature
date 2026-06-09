@@ -261,9 +261,55 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
   transition:all .2s; margin-top:6px;
 }
 .csv-upload-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* Scoreboard */
+.score-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:16px; }
+.score-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:20px; display:flex; flex-direction:column; gap:12px; transition:all .2s;
+}
+.score-card:hover { border-color:var(--accent); transform:translateY(-2px); box-shadow:0 4px 20px rgba(0,0,0,0.3); }
+.score-header { display:flex; justify-content:space-between; align-items:center; }
+.score-name { font-size:15px; font-weight:700; }
+.score-site { font-size:11px; color:var(--text2); }
+.score-circle {
+  width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:22px; font-weight:800; font-family:'Space Mono',monospace; flex-shrink:0;
+}
+.score-breakdown { display:flex; gap:4px; height:8px; border-radius:4px; overflow:hidden; }
+.score-breakdown-bar { transition:width .5s; }
+.score-detail { font-size:10px; color:var(--text2); line-height:1.6; }
+.score-detail span { font-family:'Space Mono',monospace; font-weight:600; }
+.score-badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:10px; font-weight:600; margin-top:4px; }
 </style>
 </head>
 <body>
+<div id="loginOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center">
+  <div style="text-align:center;max-width:360px;padding:40px">
+    <div style="font-size:32px;margin-bottom:8px">🔒</div>
+    <div style="font-size:20px;font-weight:700;margin-bottom:4px;color:var(--text)">Analyse Températures</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:24px">Foodles — Dashboard sécurisé</div>
+    <input type="password" id="loginInput" placeholder="Mot de passe" onkeydown="if(event.key==='Enter')checkPassword()" style="width:100%;padding:12px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;outline:none;text-align:center;margin-bottom:12px" />
+    <button onclick="checkPassword()" style="width:100%;padding:10px;border-radius:10px;border:none;background:var(--accent);color:var(--bg);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .2s" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">Accéder</button>
+    <div id="loginError" style="margin-top:12px;font-size:12px;color:var(--danger);display:none">Mot de passe incorrect</div>
+  </div>
+</div>
+<script>
+function checkPassword() {
+  const input = document.getElementById('loginInput');
+  if(input.value === 'FedyFoodles2026!') {
+    document.getElementById('loginOverlay').style.display = 'none';
+    input.value = '';
+  } else {
+    const err = document.getElementById('loginError');
+    err.style.display = 'block';
+    input.value = '';
+    input.focus();
+    setTimeout(() => err.style.display = 'none', 2000);
+  }
+}
+document.addEventListener('DOMContentLoaded', () => document.getElementById('loginInput').focus());
+</script>
 
 <div class="header">
   <h1>🌡️ Analyse Températures Frigos</h1>
@@ -276,6 +322,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text)
   <div class="tab" data-tab="detail">Détail par frigo</div>
   <div class="tab" data-tab="advanced">Heatmap</div>
   <div class="tab" data-tab="courbes">Courbes frigo</div>
+  <div class="tab" data-tab="scoreboard">Scoreboard</div>
 </div>
 
 <div class="content" id="content"></div>
@@ -587,6 +634,7 @@ function render() {
     case 'detail': el.innerHTML = renderDetail(); initDetailCharts(); break;
     case 'advanced': el.innerHTML = renderAdvanced(); initAdvancedCharts(); break;
     case 'courbes': el.innerHTML = renderCourbes(); initCourbesCharts(); break;
+    case 'scoreboard': el.innerHTML = renderScoreboard(); break;
   }
 }
 
@@ -2079,6 +2127,191 @@ function closeModal() {
 window.saveFridgeDesc = function(fridgeId) {
   const el = document.getElementById('descField_' + fridgeId);
   if(el) localStorage.setItem('fridge_desc_' + fridgeId, el.value);
+};
+
+// ============ SCOREBOARD ============
+function computeScore(f) {
+  const etageKeys = ["E1 Yaourt fond","E2 Plat avant gauche","E3 Plat avant droit","E4 Burger avant","E5 Snack avant"];
+  const vals = [];
+  etageKeys.forEach(ek => {
+    (f.etages[ek]||[]).forEach(v => { if(v !== null && v !== undefined) vals.push(v); });
+  });
+  if(vals.length === 0) return null;
+
+  let totalPts = 0;
+  const bins = {excellent:0, conforme:0, leger:0, depassement:0, nc:0};
+  vals.forEach(v => {
+    if(v < 3) { totalPts += 5; bins.excellent++; }
+    else if(v < 4) { totalPts += 4; bins.conforme++; }
+    else if(v < 4.5) { totalPts += 3; bins.leger++; }
+    else if(v < 5) { totalPts += 1.5; bins.depassement++; }
+    else { totalPts += 0; bins.nc++; }
+  });
+
+  const maxPts = vals.length * 5;
+  const baseNote = (totalPts / maxPts) * 10;
+
+  // Bonus régularité: écart-type faible = bonus (max +0.5)
+  const mean = vals.reduce((a,b)=>a+b,0) / vals.length;
+  const variance = vals.reduce((a,v)=>a+(v-mean)**2, 0) / vals.length;
+  const stddev = Math.sqrt(variance);
+  const regularity = Math.max(0, 1 - stddev / 2); // 0 to 1
+  const bonus = regularity * 0.5;
+  const note = Math.min(10, baseNote + bonus);
+
+  return {note, baseNote, bonus, totalPts, maxPts, bins, nbMesures: vals.length, mean, stddev, regularity};
+}
+
+function renderScoreboard() {
+  const scored = fridges.map(f => ({fridge:f, score:computeScore(f)})).filter(x => x.score);
+  scored.sort((a,b) => b.score.note - a.score.note);
+
+  const cards = scored.map(({fridge:f, score:s}, rank) => {
+    const note = s.note;
+    const color = note >= 8 ? '#34d399' : note >= 6 ? '#fbbf24' : note >= 4 ? '#fb923c' : '#f87171';
+    const bgColor = note >= 8 ? '#34d39920' : note >= 6 ? '#fbbf2420' : note >= 4 ? '#fb923c20' : '#f8717120';
+    const label = note >= 8 ? 'Excellent' : note >= 6 ? 'Conforme' : note >= 4 ? 'À surveiller' : 'Non conforme';
+
+    const total = s.nbMesures;
+    const bw = (n) => (n/total*100).toFixed(1);
+
+    return `
+      <div class="score-card" style="border-left:4px solid ${color};cursor:pointer" onclick="openScoreDetail('${f.id}')">
+        <div class="score-header">
+          <div>
+            <div class="score-name">#${rank+1} — ${f.name}</div>
+            <div class="score-site">${f.site || ''} · Cal ${f.cal} · ${s.nbMesures} mesures</div>
+          </div>
+          <div class="score-circle" style="background:${bgColor};color:${color}">
+            ${note.toFixed(1)}
+          </div>
+        </div>
+        <div class="score-badge" style="background:${bgColor};color:${color}">${label}</div>
+        <div class="score-breakdown">
+          <div class="score-breakdown-bar" style="width:${bw(s.bins.excellent)}%;background:#34d399" title="0-3°C: ${s.bins.excellent}"></div>
+          <div class="score-breakdown-bar" style="width:${bw(s.bins.conforme)}%;background:#fbbf24" title="3-4°C: ${s.bins.conforme}"></div>
+          <div class="score-breakdown-bar" style="width:${bw(s.bins.leger)}%;background:#f87171" title="4-4.5°C: ${s.bins.leger}"></div>
+          <div class="score-breakdown-bar" style="width:${bw(s.bins.depassement)}%;background:#ef4444" title="4.5-5°C: ${s.bins.depassement}"></div>
+          <div class="score-breakdown-bar" style="width:${bw(s.bins.nc)}%;background:#dc2626" title=">5°C: ${s.bins.nc}"></div>
+        </div>
+        <div class="score-detail">
+          <span style="color:#34d399">● ${s.bins.excellent}</span> 0-3°C &nbsp;
+          <span style="color:#fbbf24">● ${s.bins.conforme}</span> 3-4°C &nbsp;
+          <span style="color:#f87171">● ${s.bins.leger}</span> 4-4.5°C &nbsp;
+          <span style="color:#ef4444">● ${s.bins.depassement}</span> 4.5-5°C &nbsp;
+          <span style="color:#dc2626">● ${s.bins.nc}</span> >5°C<br>
+          Moy: <span>${s.mean.toFixed(1)}°C</span> · Écart-type: <span>${s.stddev.toFixed(2)}</span> · Régularité: <span>${(s.regularity*100).toFixed(0)}%</span> · Bonus: <span style="color:#34d399">+${s.bonus.toFixed(1)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Global average
+  const allScores = scored.map(x => x.score.note);
+  const avgScore = allScores.reduce((a,b)=>a+b,0) / allScores.length;
+
+  return `
+    <div class="insight-box neutral">
+      <div class="insight-title">🏆 Scoreboard — Notes des frigos</div>
+      Chaque frigo est noté sur 10 en fonction de ses températures produit.
+      Barème : 0-3°C = 5pts · 3-4°C = 4pts · 4-4.5°C = 3pts · 4.5-5°C = 1.5pt · >5°C = 0pt · Bonus régularité jusqu'à +0.5pt.
+      <br>Note = (points obtenus ÷ points max) × 10. Moyenne globale : <strong>${avgScore.toFixed(1)}/10</strong>
+    </div>
+    <div class="score-grid">${cards}</div>
+  `;
+}
+
+window.openScoreDetail = function(fridgeId) {
+  destroyModalCharts();
+  const f = fridges.find(x => x.id === fridgeId);
+  if(!f) return;
+  const s = computeScore(f);
+  if(!s) return;
+
+  const ranges = [
+    {label:'0 – 3°C', pond:5, count:s.bins.excellent, colorBg:'#22c55e', colorText:'#fff'},
+    {label:'3 – 4°C', pond:4, count:s.bins.conforme, colorBg:'#84cc16', colorText:'#fff'},
+    {label:'4 – 4,5°C', pond:3, count:s.bins.leger, colorBg:'#fbbf24', colorText:'#000'},
+    {label:'4,5 – 5°C', pond:1.5, count:s.bins.depassement, colorBg:'#f97316', colorText:'#fff'},
+    {label:'> 5°C', pond:0, count:s.bins.nc, colorBg:'#ef4444', colorText:'#fff'},
+  ];
+
+  const noteColor = s.note >= 8 ? '#34d399' : s.note >= 6 ? '#fbbf24' : s.note >= 4 ? '#fb923c' : '#f87171';
+
+  let totalPondMax = 0;
+  ranges.forEach(r => totalPondMax += r.count * 5);
+
+  let rows = ranges.map(r => {
+    const notePond = r.pond * r.count;
+    const maxPond = 5 * r.count;
+    const pct = maxPond > 0 ? (notePond / maxPond * 100) : 0;
+    const barWidth = r.count > 0 ? Math.max(5, pct) : 0;
+    // Color gradient for note pondérée: green if high, red if low
+    const barColor = pct >= 80 ? '#22c55e' : pct >= 60 ? '#84cc16' : pct >= 40 ? '#fbbf24' : pct >= 20 ? '#f97316' : '#ef4444';
+    return `<tr>
+      <td style="padding:10px 14px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">${r.label}</td>
+      <td style="padding:10px 14px;text-align:center;background:${r.colorBg};color:${r.colorText};font-weight:700;font-size:18px;border-bottom:1px solid var(--border)">${r.pond}</td>
+      <td style="padding:10px 14px;text-align:center;font-weight:700;font-size:18px;border-bottom:1px solid var(--border)">${r.count}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:24px;background:var(--surface2);border-radius:4px;overflow:hidden;position:relative">
+            <div style="width:${barWidth}%;height:100%;background:${barColor};border-radius:4px;transition:width .5s"></div>
+          </div>
+          <span style="font-weight:700;font-size:16px;min-width:40px;text-align:right">${notePond.toFixed(notePond%1?1:0)}</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Bonus row
+  rows += `<tr>
+    <td style="padding:10px 14px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">Bonus régularité</td>
+    <td style="padding:10px 14px;text-align:center;background:#60a5fa;color:#fff;font-weight:700;font-size:18px;border-bottom:1px solid var(--border)">—</td>
+    <td style="padding:10px 14px;text-align:center;font-size:12px;color:var(--text2);border-bottom:1px solid var(--border)">σ = ${s.stddev.toFixed(2)}</td>
+    <td style="padding:10px 14px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="flex:1;height:24px;background:var(--surface2);border-radius:4px;overflow:hidden;position:relative">
+          <div style="width:${s.bonus/0.5*100}%;height:100%;background:#60a5fa;border-radius:4px"></div>
+        </div>
+        <span style="font-weight:700;font-size:16px;color:#60a5fa;min-width:40px;text-align:right">+${s.bonus.toFixed(1)}</span>
+      </div>
+    </td>
+  </tr>`;
+
+  // Total row
+  rows += `<tr style="background:var(--surface)">
+    <td colspan="3" style="padding:12px 14px;font-weight:800;font-size:16px;text-align:right;border-top:2px solid var(--border)">NOTE FINALE</td>
+    <td style="padding:12px 14px;border-top:2px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="flex:1;height:30px;background:var(--surface2);border-radius:6px;overflow:hidden;position:relative">
+          <div style="width:${s.note*10}%;height:100%;background:${noteColor};border-radius:6px"></div>
+        </div>
+        <span style="font-weight:800;font-size:22px;color:${noteColor};min-width:60px;text-align:right">${s.note.toFixed(1)}/10</span>
+      </div>
+    </td>
+  </tr>`;
+
+  const html = `
+    <div class="modal-header">🏆 ${f.name} <span style="font-size:13px;color:var(--text2);font-weight:400">· ${f.site || ''} · Cal ${f.cal} · ${s.nbMesures} mesures</span></div>
+    <table style="width:100%;border-collapse:collapse;font-family:inherit;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text2);border-bottom:2px solid var(--border)">Plage de température</th>
+          <th style="padding:10px 14px;text-align:center;font-size:12px;color:var(--text2);border-bottom:2px solid var(--border);min-width:80px">Pondération /5</th>
+          <th style="padding:10px 14px;text-align:center;font-size:12px;color:var(--text2);border-bottom:2px solid var(--border);min-width:80px">Nb mesures</th>
+          <th style="padding:10px 14px;text-align:left;font-size:12px;color:var(--text2);border-bottom:2px solid var(--border);min-width:200px">Note pondérée</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="margin-top:16px;font-size:11px;color:var(--text2)">
+      Calcul : Note = (${s.totalPts.toFixed(s.totalPts%1?1:0)} pts ÷ ${s.maxPts} pts max) × 10 = ${s.baseNote.toFixed(1)} + bonus ${s.bonus.toFixed(1)} = <strong style="color:${noteColor}">${s.note.toFixed(1)}/10</strong>
+    </div>
+  `;
+
+  document.getElementById('modalBody').innerHTML = html;
+  document.getElementById('modalOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
 };
 
 // Close modal on overlay click
