@@ -543,6 +543,88 @@ function resetData() {
   location.reload();
 }
 
+// ============ CLOUD SYNC (Google Sheets) ============
+const APPS_SCRIPT_URL = 'https://script.google.com/a/macros/foodles.co/s/AKfycbxwGeJyIgIlhFKn_0aBTfau3f6q4j6Sj460gucOATlW_yCJKboYDqdX-MTtbgogSG993Q/exec'; // ← Coller l'URL du déploiement Apps Script ici
+
+function saveToCloud() {
+  if(!APPS_SCRIPT_URL) {
+    alert('URL Apps Script non configurée. Ouvrez le code source du fichier HTML et collez l\'URL dans la variable APPS_SCRIPT_URL.');
+    return;
+  }
+  const data = JSON.stringify(fridges.map(f => ({
+    id:f.id, name:f.name, site:f.site, cal:f.cal,
+    calDays:f.calDays, jourInfo:f.jourInfo, etages:f.etages, isCustom:f.isCustom||false
+  })));
+  
+  const btn = event.target;
+  btn.textContent = '⏳ Sauvegarde...';
+  btn.disabled = true;
+  
+  fetch(APPS_SCRIPT_URL, {
+    method:'POST',
+    body: data,
+    headers: {'Content-Type':'text/plain'}
+  })
+  .then(r => r.json())
+  .then(res => {
+    btn.textContent = '✅ Sauvegardé !';
+    setTimeout(() => { btn.textContent = '☁️ Sauvegarder'; btn.disabled = false; }, 2000);
+  })
+  .catch(err => {
+    btn.textContent = '❌ Erreur';
+    setTimeout(() => { btn.textContent = '☁️ Sauvegarder'; btn.disabled = false; }, 2000);
+    console.error('Save error:', err);
+  });
+}
+
+function loadFromCloud() {
+  if(!APPS_SCRIPT_URL) {
+    alert('URL Apps Script non configurée. Ouvrez le code source du fichier HTML et collez l\'URL dans la variable APPS_SCRIPT_URL.');
+    return;
+  }
+  
+  const btn = event.target;
+  btn.textContent = '⏳ Chargement...';
+  btn.disabled = true;
+  
+  // Use JSONP to avoid CORS issues
+  const callbackName = '_cloudCallback_' + Date.now();
+  window[callbackName] = function(data) {
+    if(data && Array.isArray(data) && data.length > 0) {
+      data.forEach(saved => {
+        let f = fridges.find(x => x.id === saved.id);
+        if(!f && saved.isCustom) {
+          f = {id:saved.id, name:saved.name, site:saved.site||'', cal:saved.cal||'0.5', dates:'', calDays:[], jourInfo:[], isCustom:true, etages:{}};
+          fridges.push(f);
+        }
+        if(!f) return;
+        if(saved.etages) f.etages = saved.etages;
+        if(saved.calDays) f.calDays = saved.calDays;
+        if(saved.jourInfo) f.jourInfo = saved.jourInfo;
+        if(saved.name) f.name = saved.name;
+        if(saved.isCustom) f.isCustom = true;
+      });
+      saveData();
+      render();
+      btn.textContent = '✅ Chargé !';
+    } else {
+      btn.textContent = '⚠️ Aucune donnée';
+    }
+    setTimeout(() => { btn.textContent = '📥 Charger'; btn.disabled = false; }, 2000);
+    delete window[callbackName];
+    document.getElementById(callbackName).remove();
+  };
+  
+  const script = document.createElement('script');
+  script.id = callbackName;
+  script.src = APPS_SCRIPT_URL + '?callback=' + callbackName;
+  script.onerror = () => {
+    btn.textContent = '❌ Erreur';
+    setTimeout(() => { btn.textContent = '📥 Charger'; btn.disabled = false; }, 2000);
+  };
+  document.body.appendChild(script);
+}
+
 async function exportData() {
   let html;
   try {
@@ -652,6 +734,8 @@ function renderSaisie() {
     <div class="saisie-actions">
       <span class="status" id="saveStatus">✓ Données sauvegardées</span>
       <button onclick="exportData()" style="margin-left:auto;padding:6px 14px;font-size:11px;border-radius:6px;cursor:pointer;border:1px solid var(--ok);background:var(--ok-bg);color:var(--ok);font-family:inherit;font-weight:600">💾 Exporter le fichier avec mes données</button>
+      <button onclick="saveToCloud()" style="padding:6px 14px;font-size:11px;border-radius:6px;cursor:pointer;border:1px solid var(--accent);background:var(--accent-bg);color:var(--accent);font-family:inherit;font-weight:600">☁️ Sauvegarder</button>
+      <button onclick="loadFromCloud()" style="padding:6px 14px;font-size:11px;border-radius:6px;cursor:pointer;border:1px solid #60a5fa;background:#60a5fa20;color:#60a5fa;font-family:inherit;font-weight:600">📥 Charger</button>
       <button onclick="resetData()" style="padding:6px 14px;font-size:11px;border-radius:6px;cursor:pointer;border:1px solid var(--danger);background:var(--danger-bg);color:var(--danger);font-family:inherit">🗑️ Réinitialiser</button>
     </div>
   `;
